@@ -546,7 +546,6 @@ class CodeExecutorAgent(BaseChatAgent, Component[CodeExecutorAgentConfig]):
 
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
 
-        message_id = str(uuid.uuid4())
         for nth_try in range(max_retries_on_error + 1):  # Do one default generation, execution and inference loop
             # Step 1: Add new user/handoff messages to the model context
             await self._add_messages_to_context(
@@ -555,6 +554,7 @@ class CodeExecutorAgent(BaseChatAgent, Component[CodeExecutorAgentConfig]):
             )
 
             # Step 2: Run inference with the model context
+            message_id = str(uuid.uuid4())
             model_result = None
             async for inference_output in self._call_llm(
                 model_client=model_client,
@@ -573,13 +573,11 @@ class CodeExecutorAgent(BaseChatAgent, Component[CodeExecutorAgentConfig]):
 
             assert model_result is not None, "No model result was produced."
 
-            # Step 3: [NEW] If the model produced a hidden "thought," yield it as an event
+            # --- NEW: If the model produced a hidden "thought," yield it as an event ---
             if model_result.thought:
-                thought_event = ThoughtEvent(content=model_result.thought, source=agent_name, id=message_id)
+                thought_event = ThoughtEvent(content=model_result.thought, source=agent_name)
                 yield thought_event
                 inner_messages.append(thought_event)
-                # Regenerate the message ID for correlation between streaming chunks and final message
-                message_id = str(uuid.uuid4())
 
             # Step 4: Add the assistant message to the model context (including thought if present)
             await model_context.add_message(
@@ -600,6 +598,7 @@ class CodeExecutorAgent(BaseChatAgent, Component[CodeExecutorAgentConfig]):
                     chat_message=TextMessage(
                         content=str(model_result.content),
                         source=agent_name,
+                        id=message_id,
                     )
                 )
                 return
@@ -676,7 +675,7 @@ class CodeExecutorAgent(BaseChatAgent, Component[CodeExecutorAgentConfig]):
             model_context=model_context,
             agent_name=agent_name,
             inner_messages=inner_messages,
-            message_id=message_id,
+            message_id=str(uuid.uuid4()),
         ):
             yield reflection_response  # Last reflection_response is of type Response so it will finish the routine
 
@@ -878,11 +877,9 @@ class CodeExecutorAgent(BaseChatAgent, Component[CodeExecutorAgentConfig]):
 
         # --- NEW: If the reflection produced a thought, yield it ---
         if reflection_result.thought:
-            thought_event = ThoughtEvent(content=reflection_result.thought, source=agent_name, id=message_id)
+            thought_event = ThoughtEvent(content=reflection_result.thought, source=agent_name)
             yield thought_event
             inner_messages.append(thought_event)
-            # Regenerate the message ID for the final message
-            message_id = str(uuid.uuid4())
 
         # Add to context (including thought if present)
         await model_context.add_message(
